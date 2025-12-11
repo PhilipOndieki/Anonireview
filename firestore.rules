@@ -1,0 +1,80 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if isOwner(userId);
+      // Users can create their own profile
+      allow create: if isOwner(userId);
+      // Users can update their own profile (not including projectsPosted count)
+      allow update: if isOwner(userId);
+      // Users can delete their own profile
+      allow delete: if isOwner(userId);
+    }
+
+    // Projects collection
+    match /projects/{projectId} {
+      // Anyone can read published projects
+      allow read: if resource.data.status == 'active';
+
+      // Authenticated users can create projects
+      allow create: if isSignedIn()
+        && request.resource.data.authorUID == request.auth.uid
+        && request.resource.data.status == 'active'
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 100
+        && request.resource.data.url is string
+        && request.resource.data.url.size() > 0
+        && request.resource.data.description is string
+        && request.resource.data.description.size() >= 10
+        && request.resource.data.description.size() <= 500;
+
+      // Project owners can update their own projects
+      allow update: if isOwner(resource.data.authorUID)
+        || (
+          // Allow system updates for views, ratings, and review counts
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['views', 'averageRating', 'totalReviews'])
+        );
+
+      // Project owners can delete their own projects
+      allow delete: if isOwner(resource.data.authorUID);
+    }
+
+    // Reviews collection
+    match /reviews/{reviewId} {
+      // Anyone can read published reviews
+      allow read: if resource.data.status == 'published';
+
+      // Anyone can create reviews (anonymous)
+      allow create: if request.resource.data.projectID is string
+        && request.resource.data.rating is number
+        && request.resource.data.rating >= 1
+        && request.resource.data.rating <= 10
+        && request.resource.data.reviewText is string
+        && request.resource.data.reviewText.size() >= 50
+        && request.resource.data.reviewText.size() <= 1000
+        && request.resource.data.ipHash is string
+        && request.resource.data.status == 'published';
+
+      // Allow updates for helpful count and flags
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['helpfulCount', 'flagCount', 'status']);
+
+      // Only admins can delete reviews (implement admin check if needed)
+      allow delete: if false;
+    }
+  }
+}
